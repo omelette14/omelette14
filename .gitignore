@@ -1,0 +1,6 @@
+node_modules/
+qrcodes.json
+qrcodes.db
+.env
+*.db-shm
+*.db-wal
