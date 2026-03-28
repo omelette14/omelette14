@@ -1,10 +1,24 @@
-/* ── State ── */
-let currentQRData = null;
+/* ══════════════════════════════════════════════
+   LookAtMe Backoffice — app.js
+   Artistic QR: circular dots + logo watermark
+   ══════════════════════════════════════════════ */
+
+let currentQRData    = null;
 let currentStruttura = '';
 let currentNumerocampo = '';
-let logoPDFCanvas = null; // offscreen canvas with the real logo rendered from PDF
+let logoImage        = null;   // the real SVG loaded as Image
 
 const BASE = 'https://lookatmesport.com';
+
+/* ── Load real SVG logo ── */
+async function loadLogo() {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload  = () => { logoImage = img; resolve(); };
+    img.onerror = () => resolve();          // still works without logo
+    img.src = '/logo.svg';
+  });
+}
 
 /* ── URL preview ── */
 ['struttura', 'numerocampo'].forEach(id => {
@@ -14,9 +28,8 @@ const BASE = 'https://lookatmesport.com';
 function updatePreview() {
   const s = document.getElementById('struttura').value.trim();
   const n = document.getElementById('numerocampo').value;
-  const box = document.getElementById('urlBox');
+  const box  = document.getElementById('urlBox');
   const text = document.getElementById('urlText');
-
   if (s || n) {
     text.textContent = `${BASE}/?struttura=${s || '*struttura*'}&numerocampo=${n || '*Ncampo*'}`;
     box.hidden = false;
@@ -26,18 +39,17 @@ function updatePreview() {
 }
 
 /* ── Form submit ── */
-document.getElementById('qrForm').addEventListener('submit', async (e) => {
+document.getElementById('qrForm').addEventListener('submit', async e => {
   e.preventDefault();
-
-  currentStruttura = document.getElementById('struttura').value.trim();
+  currentStruttura   = document.getElementById('struttura').value.trim();
   currentNumerocampo = document.getElementById('numerocampo').value;
 
   const btn = e.target.querySelector('button[type="submit"]');
-  btn.textContent = 'Generazione in corso...';
+  btn.textContent = 'Generazione in corso…';
   btn.disabled = true;
 
   try {
-    await generateQRWithLogo(currentStruttura, currentNumerocampo);
+    await generateArtisticQR(currentStruttura, currentNumerocampo);
 
     const card = document.getElementById('previewCard');
     card.hidden = false;
@@ -53,64 +65,122 @@ document.getElementById('qrForm').addEventListener('submit', async (e) => {
   }
 });
 
-/* ── QR generation: server creates QR, browser overlays logo ── */
-async function generateQRWithLogo(struttura, numerocampo) {
-  // 1. Ask server to generate QR code PNG
+/* ══════════════════════════════════════════
+   ARTISTIC QR RENDERER
+   1. Fetch matrix data from server
+   2. White canvas
+   3. Logo as faint stippled watermark
+   4. QR modules as circular dots
+   5. Prominent logo in center
+   ══════════════════════════════════════════ */
+async function generateArtisticQR(struttura, numerocampo) {
   const res = await fetch('/api/generate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ struttura, numerocampo: parseInt(numerocampo, 10) })
   });
+  if (!res.ok) throw new Error((await res.json()).error || 'Server error');
+  const { matrix, size } = await res.json();
 
-  if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error || 'Server error');
-  }
-
-  const { qrDataUrl } = await res.json();
-
-  // 2. Draw QR onto canvas
-  const canvas = document.getElementById('qrCanvas');
-  const SIZE = 400;
-  canvas.width = SIZE;
-  canvas.height = SIZE;
-  const ctx = canvas.getContext('2d');
-
-  await loadImage(qrDataUrl).then(img => ctx.drawImage(img, 0, 0, SIZE, SIZE));
-
-  // 3. Overlay real LookAtMe logo in center
-  const logoSize = Math.floor(SIZE * 0.22);
-  const logoX = Math.floor((SIZE - logoSize) / 2);
-  const logoY = Math.floor((SIZE - logoSize) / 2);
-  const pad = 10;
-
-  // White background behind logo
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(logoX - pad, logoY - pad, logoSize + pad * 2, logoSize + pad * 2);
-
-  if (logoPDFCanvas) {
-    // Use the real logo rendered from logo.pdf
-    ctx.drawImage(logoPDFCanvas, logoX, logoY, logoSize, logoSize);
-  } else {
-    console.warn('Logo PDF non disponibile — QR generato senza logo.');
-  }
-
-  currentQRData = canvas.toDataURL('image/png');
+  await renderArtisticQR(matrix, size);
+  currentQRData = document.getElementById('qrCanvas').toDataURL('image/png');
 }
 
-function loadImage(src) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error(`Impossibile caricare: ${src}`));
-    img.src = src;
-  });
+async function renderArtisticQR(matrix, size) {
+  const canvas = document.getElementById('qrCanvas');
+  const S = 500;                              // canvas size px
+  canvas.width  = S;
+  canvas.height = S;
+  const ctx = canvas.getContext('2d');
+
+  /* 1 ── White background */
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, S, S);
+
+  /* 2 ── Logo as faint watermark covering the whole QR area
+          Draw it lightly so the dots appear to emerge from it */
+  if (logoImage) {
+    // Soft outer glow: scale logo to cover most of the canvas
+    const logoW = S * 0.72;
+    const logoH = logoW * (logoImage.naturalHeight / logoImage.naturalWidth);
+    const lx = (S - logoW) / 2;
+    const ly = (S - logoH) / 2;
+
+    ctx.globalAlpha = 0.09;
+    ctx.drawImage(logoImage, lx, ly, logoW, logoH);
+    ctx.globalAlpha = 1.0;
+  }
+
+  /* 3 ── QR dots as circles with subtle radial gradient */
+  const margin     = 2;                       // quiet zone in modules
+  const cellSize   = S / (size + margin * 2);
+  const offset     = margin * cellSize;
+  const dotRadius  = cellSize * 0.44;         // slightly < half cell → gap between dots
+
+  // Radial gradient: slightly lighter in center, pure black at edges
+  const grad = ctx.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S * 0.65);
+  grad.addColorStop(0,   '#1a1a1a');
+  grad.addColorStop(0.6, '#0a0a0a');
+  grad.addColorStop(1,   '#000000');
+
+  for (let row = 0; row < size; row++) {
+    for (let col = 0; col < size; col++) {
+      if (matrix[row * size + col]) {
+        const cx = offset + col * cellSize + cellSize / 2;
+        const cy = offset + row * cellSize + cellSize / 2;
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(cx, cy, dotRadius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+
+  /* 4 ── Center logo overlay — white rounded bg + real logo */
+  const logoSize  = Math.floor(S * 0.21);
+  const logoX     = Math.floor((S - logoSize) / 2);
+  const logoY     = Math.floor((S - logoSize) / 2);
+  const pad       = 11;
+
+  // White rounded rectangle
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  roundRect(ctx, logoX - pad, logoY - pad, logoSize + pad * 2, logoSize + pad * 2, 9);
+  ctx.fill();
+
+  // Thin border
+  ctx.strokeStyle = 'rgba(0,0,0,0.08)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  roundRect(ctx, logoX - pad, logoY - pad, logoSize + pad * 2, logoSize + pad * 2, 9);
+  ctx.stroke();
+
+  if (logoImage) {
+    ctx.drawImage(logoImage, logoX, logoY, logoSize, logoSize);
+  }
+}
+
+/* polyfill for ctx.roundRect (Safari < 15.4 / older Edge) */
+function roundRect(ctx, x, y, w, h, r) {
+  if (ctx.roundRect) {
+    ctx.roundRect(x, y, w, h, r);
+  } else {
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+  }
 }
 
 /* ── Save to database ── */
 async function saveQR() {
   if (!currentQRData) return;
-
   try {
     const res = await fetch('/api/save', {
       method: 'POST',
@@ -121,101 +191,67 @@ async function saveQR() {
         qrImage: currentQRData
       })
     });
-
     const data = await res.json();
-    if (res.ok) {
-      showToast('QR code salvato nel database!', 'success');
-      loadHistory();
-    } else {
-      showToast(data.error || 'Errore nel salvataggio', 'error');
-    }
-  } catch {
-    showToast('Errore di connessione al server', 'error');
-  }
+    if (res.ok) { showToast('QR code salvato!', 'success'); loadHistory(); }
+    else          showToast(data.error || 'Errore nel salvataggio', 'error');
+  } catch { showToast('Errore di connessione', 'error'); }
 }
 
 /* ── Download PNG ── */
 function downloadPNG() {
   if (!currentQRData) return;
   const a = document.createElement('a');
-  a.href = currentQRData;
+  a.href     = currentQRData;
   a.download = `QR_${currentStruttura}_campo${currentNumerocampo}.png`;
   a.click();
 }
 
-/* ── Download PDF (client-side) ── */
+/* ── Download PDF (client-side jsPDF) ── */
 function downloadPDF() {
   if (!currentQRData) return;
-
   const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const doc   = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const pageW = doc.internal.pageSize.getWidth();
 
-  // Black header
   doc.setFillColor(0, 0, 0);
   doc.rect(0, 0, pageW, 28, 'F');
-  doc.setFontSize(16);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(16).setFont('helvetica', 'bold').setTextColor(255, 255, 255);
   doc.text('LookAtMe Sport', pageW / 2, 18, { align: 'center' });
 
-  // Info
-  doc.setTextColor(0, 0, 0);
-  doc.setFontSize(18);
-  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(0, 0, 0).setFontSize(18).setFont('helvetica', 'bold');
   doc.text(currentStruttura, pageW / 2, 50, { align: 'center' });
-  doc.setFontSize(13);
-  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(13).setFont('helvetica', 'normal');
   doc.text(`Campo ${currentNumerocampo}`, pageW / 2, 60, { align: 'center' });
 
-  // URL
-  doc.setFontSize(8);
-  doc.setTextColor(120, 120, 120);
+  doc.setFontSize(8).setTextColor(120, 120, 120);
   const url = `${BASE}/?struttura=${encodeURIComponent(currentStruttura)}&numerocampo=${currentNumerocampo}`;
   doc.text(url, pageW / 2, 70, { align: 'center' });
 
-  // QR image
-  const imgSize = 120;
-  const imgX = (pageW - imgSize) / 2;
-  doc.addImage(currentQRData, 'PNG', imgX, 80, imgSize, imgSize);
+  const imgSize = 130;
+  doc.addImage(currentQRData, 'PNG', (pageW - imgSize) / 2, 78, imgSize, imgSize);
 
-  // Footer
-  const today = new Date().toLocaleDateString('it-IT', {
-    day: '2-digit', month: '2-digit', year: 'numeric'
-  });
-  doc.setFontSize(8);
-  doc.setTextColor(160, 160, 160);
-  doc.text(`Generato il ${today} — lookatmesport.com`, pageW / 2, 210, { align: 'center' });
-
+  doc.setFontSize(8).setTextColor(160, 160, 160);
+  doc.text(
+    `Generato il ${new Date().toLocaleDateString('it-IT')} — lookatmesport.com`,
+    pageW / 2, 215, { align: 'center' }
+  );
   doc.save(`QR_${currentStruttura}_campo${currentNumerocampo}.pdf`);
 }
 
-/* ── Load history ── */
+/* ── History ── */
 async function loadHistory() {
   try {
-    const res = await fetch('/api/qrcodes');
-    const list = await res.json();
+    const list = await (await fetch('/api/qrcodes')).json();
     renderHistory(list);
-  } catch {
-    console.error('Impossibile caricare la cronologia');
-  }
+  } catch { console.error('Impossibile caricare la cronologia'); }
 }
 
 function renderHistory(list) {
   const el = document.getElementById('qrList');
-
-  if (!list.length) {
-    el.innerHTML = '<p class="empty">Nessun QR code salvato</p>';
-    return;
-  }
-
+  if (!list.length) { el.innerHTML = '<p class="empty">Nessun QR code salvato</p>'; return; }
   el.innerHTML = `<div class="qr-grid">${list.map(qr => `
     <div class="qr-item" id="item-${qr.id}">
-      <img
-        src="/api/qrcodes/${qr.id}/image"
-        alt="QR ${escapeHtml(qr.struttura)}"
-        loading="lazy"
-      >
+      <img src="/api/qrcodes/${qr.id}/image" alt="QR ${escapeHtml(qr.struttura)}" loading="lazy">
       <div class="item-name">${escapeHtml(qr.struttura)}</div>
       <div class="item-campo">Campo ${qr.numerocampo}</div>
       <div class="item-date">${formatDate(qr.created_at)}</div>
@@ -224,25 +260,16 @@ function renderHistory(list) {
         <a href="/api/qrcodes/${qr.id}/pdf" class="btn btn-outline btn-xs">PDF</a>
         <button class="btn btn-danger btn-xs" onclick="deleteQR(${qr.id})">Elimina</button>
       </div>
-    </div>
-  `).join('')}</div>`;
+    </div>`).join('')}</div>`;
 }
 
-/* ── Delete ── */
 async function deleteQR(id) {
-  if (!confirm('Eliminare questo QR code dal database?')) return;
-
+  if (!confirm('Eliminare questo QR code?')) return;
   try {
     const res = await fetch(`/api/qrcodes/${id}`, { method: 'DELETE' });
-    if (res.ok) {
-      showToast('QR code eliminato', 'success');
-      loadHistory();
-    } else {
-      showToast("Errore nell'eliminazione", 'error');
-    }
-  } catch {
-    showToast('Errore di connessione', 'error');
-  }
+    if (res.ok) { showToast('Eliminato', 'success'); loadHistory(); }
+    else          showToast("Errore nell'eliminazione", 'error');
+  } catch { showToast('Errore di connessione', 'error'); }
 }
 
 /* ── Helpers ── */
@@ -262,40 +289,18 @@ function formatDate(str) {
 let toastTimer;
 function showToast(msg, type = '') {
   const t = document.getElementById('toast');
-  t.textContent = msg;
-  t.className = `toast ${type} show`;
+  t.textContent  = msg;
+  t.className    = `toast ${type} show`;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { t.className = 'toast'; }, 3500);
 }
 
-/* ── Load real logo from PDF ── */
-async function loadLogoPDF() {
-  try {
-    pdfjsLib.GlobalWorkerOptions.workerSrc =
-      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-
-    const pdf = await pdfjsLib.getDocument('/logo.pdf').promise;
-    const page = await pdf.getPage(1);
-
-    // Render at 3x scale for crisp quality
-    const viewport = page.getViewport({ scale: 3 });
-    const canvas = document.createElement('canvas');
-    canvas.width = viewport.width;
-    canvas.height = viewport.height;
-
-    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
-
-    logoPDFCanvas = canvas;
-
-    // Inject into header (inverted to white via CSS filter)
-    document.getElementById('headerLogo').src = canvas.toDataURL('image/png');
-
-  } catch (err) {
-    // logo.pdf not found yet — header stays empty, QR will generate without logo overlay
-    console.warn('logo.pdf non trovato in public/. Carica il file per abilitare il logo.', err);
-  }
-}
-
 /* ── Init ── */
-loadLogoPDF();
-loadHistory();
+(async () => {
+  await loadLogo();
+  // update header img once logo is ready
+  if (logoImage) {
+    document.getElementById('headerLogo').src = logoImage.src;
+  }
+  loadHistory();
+})();
