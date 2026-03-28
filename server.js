@@ -2,10 +2,33 @@ const express = require('express');
 const path = require('path');
 const db = require('./db');
 const PDFDocument = require('pdfkit');
+const QRCode = require('qrcode');
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
+
+/* ── Generate QR (server-side, returns base64 PNG) ── */
+app.post('/api/generate', async (req, res) => {
+  const { struttura, numerocampo } = req.body;
+  if (!struttura || !numerocampo) {
+    return res.status(400).json({ error: 'Campi mancanti' });
+  }
+
+  const url = `https://lookatmesport.com/?struttura=${encodeURIComponent(struttura)}&numerocampo=${numerocampo}`;
+
+  try {
+    const dataUrl = await QRCode.toDataURL(url, {
+      errorCorrectionLevel: 'H',
+      margin: 2,
+      width: 400,
+      color: { dark: '#000000', light: '#ffffff' }
+    });
+    res.json({ qrDataUrl: dataUrl, url });
+  } catch (err) {
+    res.status(500).json({ error: 'Errore nella generazione del QR' });
+  }
+});
 
 /* ── Save QR code ── */
 app.post('/api/save', (req, res) => {

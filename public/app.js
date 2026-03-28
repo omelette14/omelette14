@@ -31,41 +31,53 @@ document.getElementById('qrForm').addEventListener('submit', async (e) => {
   currentStruttura = document.getElementById('struttura').value.trim();
   currentNumerocampo = document.getElementById('numerocampo').value;
 
-  const url = `${BASE}/?struttura=${encodeURIComponent(currentStruttura)}&numerocampo=${currentNumerocampo}`;
+  const btn = e.target.querySelector('button[type="submit"]');
+  btn.textContent = 'Generazione in corso...';
+  btn.disabled = true;
 
   try {
-    await generateQRWithLogo(url);
+    await generateQRWithLogo(currentStruttura, currentNumerocampo);
 
     const card = document.getElementById('previewCard');
     card.hidden = false;
     document.getElementById('previewMeta').innerHTML =
       `<strong>${escapeHtml(currentStruttura)}</strong> &mdash; Campo ${currentNumerocampo}`;
-
     card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   } catch (err) {
-    console.error(err);
+    console.error('QR generation error:', err);
     showToast('Errore nella generazione del QR code', 'error');
+  } finally {
+    btn.textContent = 'Genera QR Code';
+    btn.disabled = false;
   }
 });
 
-/* ── QR + logo generation ── */
-async function generateQRWithLogo(url) {
+/* ── QR generation: server creates QR, browser overlays logo ── */
+async function generateQRWithLogo(struttura, numerocampo) {
+  // 1. Ask server to generate QR code PNG
+  const res = await fetch('/api/generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ struttura, numerocampo: parseInt(numerocampo, 10) })
+  });
+
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || 'Server error');
+  }
+
+  const { qrDataUrl } = await res.json();
+
+  // 2. Draw QR onto canvas
   const canvas = document.getElementById('qrCanvas');
   const SIZE = 400;
   canvas.width = SIZE;
   canvas.height = SIZE;
-
-  // Draw QR code onto canvas
-  await QRCode.toCanvas(canvas, url, {
-    errorCorrectionLevel: 'H',
-    margin: 2,
-    width: SIZE,
-    color: { dark: '#000000', light: '#ffffff' }
-  });
-
   const ctx = canvas.getContext('2d');
 
-  // Calculate logo area (22% of QR size)
+  await loadImage(qrDataUrl).then(img => ctx.drawImage(img, 0, 0, SIZE, SIZE));
+
+  // 3. Overlay LookAtMe logo in center
   const logoSize = Math.floor(SIZE * 0.22);
   const logoX = Math.floor((SIZE - logoSize) / 2);
   const logoY = Math.floor((SIZE - logoSize) / 2);
@@ -75,18 +87,24 @@ async function generateQRWithLogo(url) {
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(logoX - pad, logoY - pad, logoSize + pad * 2, logoSize + pad * 2);
 
-  // Load and draw icon-only logo (no text)
-  await new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => {
-      ctx.drawImage(img, logoX, logoY, logoSize, logoSize);
-      resolve();
-    };
-    img.onerror = reject;
-    img.src = '/logo-icon.svg';
-  });
+  // Draw logo (icon only, no text)
+  try {
+    const logo = await loadImage('/logo-icon.svg');
+    ctx.drawImage(logo, logoX, logoY, logoSize, logoSize);
+  } catch (err) {
+    console.warn('Logo non caricato, QR generato senza logo:', err);
+  }
 
   currentQRData = canvas.toDataURL('image/png');
+}
+
+function loadImage(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error(`Impossibile caricare: ${src}`));
+    img.src = src;
+  });
 }
 
 /* ── Save to database ── */
@@ -116,7 +134,7 @@ async function saveQR() {
   }
 }
 
-/* ── Download PNG (client-side) ── */
+/* ── Download PNG ── */
 function downloadPNG() {
   if (!currentQRData) return;
   const a = document.createElement('a');
@@ -133,7 +151,7 @@ function downloadPDF() {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const pageW = doc.internal.pageSize.getWidth();
 
-  // Black header bar
+  // Black header
   doc.setFillColor(0, 0, 0);
   doc.rect(0, 0, pageW, 28, 'F');
   doc.setFontSize(16);
@@ -141,12 +159,11 @@ function downloadPDF() {
   doc.setTextColor(255, 255, 255);
   doc.text('LookAtMe Sport', pageW / 2, 18, { align: 'center' });
 
-  // Details
+  // Info
   doc.setTextColor(0, 0, 0);
   doc.setFontSize(18);
   doc.setFont('helvetica', 'bold');
   doc.text(currentStruttura, pageW / 2, 50, { align: 'center' });
-
   doc.setFontSize(13);
   doc.setFont('helvetica', 'normal');
   doc.text(`Campo ${currentNumerocampo}`, pageW / 2, 60, { align: 'center' });
@@ -203,19 +220,9 @@ function renderHistory(list) {
       <div class="item-campo">Campo ${qr.numerocampo}</div>
       <div class="item-date">${formatDate(qr.created_at)}</div>
       <div class="item-actions">
-        <a
-          href="/api/qrcodes/${qr.id}/png"
-          download
-          class="btn btn-outline btn-xs"
-        >PNG</a>
-        <a
-          href="/api/qrcodes/${qr.id}/pdf"
-          class="btn btn-outline btn-xs"
-        >PDF</a>
-        <button
-          class="btn btn-danger btn-xs"
-          onclick="deleteQR(${qr.id})"
-        >Elimina</button>
+        <a href="/api/qrcodes/${qr.id}/png" download class="btn btn-outline btn-xs">PNG</a>
+        <a href="/api/qrcodes/${qr.id}/pdf" class="btn btn-outline btn-xs">PDF</a>
+        <button class="btn btn-danger btn-xs" onclick="deleteQR(${qr.id})">Elimina</button>
       </div>
     </div>
   `).join('')}</div>`;
@@ -231,7 +238,7 @@ async function deleteQR(id) {
       showToast('QR code eliminato', 'success');
       loadHistory();
     } else {
-      showToast('Errore nell\'eliminazione', 'error');
+      showToast("Errore nell'eliminazione", 'error');
     }
   } catch {
     showToast('Errore di connessione', 'error');
@@ -247,11 +254,8 @@ function escapeHtml(str) {
 
 function formatDate(str) {
   return new Date(str).toLocaleDateString('it-IT', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit'
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit'
   });
 }
 
