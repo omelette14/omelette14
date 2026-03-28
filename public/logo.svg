@@ -1,14 +1,32 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 240">
-  <!-- Eye outer shape (lens/mandorla) -->
-  <path d="M8,100 C8,100 85,8 150,8 C215,8 292,100 292,100 C292,100 215,192 150,192 C85,192 8,100 8,100 Z" fill="#000000"/>
-  <!-- Eye inner white space -->
-  <path d="M42,100 C42,100 90,44 150,44 C210,44 258,100 258,100 C258,100 210,156 150,156 C90,156 42,100 42,100 Z" fill="#ffffff"/>
-  <!-- Outer iris circle -->
-  <circle cx="150" cy="100" r="52" fill="#000000"/>
-  <!-- Inner white circle -->
-  <circle cx="150" cy="100" r="38" fill="#ffffff"/>
-  <!-- Left-pointing triangle (rewind/play left) -->
-  <polygon points="168,78 168,122 116,100" fill="#000000"/>
-  <!-- LookAtMe text -->
-  <text x="150" y="228" font-family="Arial, Helvetica, sans-serif" font-size="46" font-weight="bold" text-anchor="middle" fill="#000000">LookAtMe</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 510">
+
+  <!-- Outer black eye/lens shape -->
+  <path d="M25,192 C100,43 400,43 475,192 C400,341 100,341 25,192 Z" fill="#000"/>
+
+  <!-- Inner white cutout — creates the thick border/stroke effect -->
+  <path d="M72,192 C138,82 362,82 428,192 C362,302 138,302 72,192 Z" fill="#fff"/>
+
+  <!-- Large black filled circle (iris) -->
+  <circle cx="250" cy="192" r="90" fill="#000"/>
+
+  <!-- White left-pointing triangle inside circle -->
+  <polygon points="285,132 285,252 168,192" fill="#fff"/>
+
+  <!-- ® Registered trademark — top right corner -->
+  <circle cx="458" cy="44" r="23" fill="none" stroke="#000" stroke-width="3.5"/>
+  <text x="458" y="52"
+    font-family="Arial, Helvetica, sans-serif"
+    font-size="21"
+    font-weight="bold"
+    text-anchor="middle"
+    fill="#000">R</text>
+
+  <!-- LookAtMe bold text -->
+  <text x="250" y="488"
+    font-family="'Arial Black', 'Arial Bold', Arial, Helvetica, sans-serif"
+    font-size="72"
+    font-weight="900"
+    text-anchor="middle"
+    fill="#000">LookAtMe</text>
+
 </svg>
