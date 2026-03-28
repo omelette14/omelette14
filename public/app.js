@@ -2,6 +2,7 @@
 let currentQRData = null;
 let currentStruttura = '';
 let currentNumerocampo = '';
+let logoPDFCanvas = null; // offscreen canvas with the real logo rendered from PDF
 
 const BASE = 'https://lookatmesport.com';
 
@@ -77,7 +78,7 @@ async function generateQRWithLogo(struttura, numerocampo) {
 
   await loadImage(qrDataUrl).then(img => ctx.drawImage(img, 0, 0, SIZE, SIZE));
 
-  // 3. Overlay LookAtMe logo in center
+  // 3. Overlay real LookAtMe logo in center
   const logoSize = Math.floor(SIZE * 0.22);
   const logoX = Math.floor((SIZE - logoSize) / 2);
   const logoY = Math.floor((SIZE - logoSize) / 2);
@@ -87,12 +88,11 @@ async function generateQRWithLogo(struttura, numerocampo) {
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(logoX - pad, logoY - pad, logoSize + pad * 2, logoSize + pad * 2);
 
-  // Draw logo (icon only, no text)
-  try {
-    const logo = await loadImage('/logo-icon.svg');
-    ctx.drawImage(logo, logoX, logoY, logoSize, logoSize);
-  } catch (err) {
-    console.warn('Logo non caricato, QR generato senza logo:', err);
+  if (logoPDFCanvas) {
+    // Use the real logo rendered from logo.pdf
+    ctx.drawImage(logoPDFCanvas, logoX, logoY, logoSize, logoSize);
+  } else {
+    console.warn('Logo PDF non disponibile — QR generato senza logo.');
   }
 
   currentQRData = canvas.toDataURL('image/png');
@@ -268,5 +268,34 @@ function showToast(msg, type = '') {
   toastTimer = setTimeout(() => { t.className = 'toast'; }, 3500);
 }
 
+/* ── Load real logo from PDF ── */
+async function loadLogoPDF() {
+  try {
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+    const pdf = await pdfjsLib.getDocument('/logo.pdf').promise;
+    const page = await pdf.getPage(1);
+
+    // Render at 3x scale for crisp quality
+    const viewport = page.getViewport({ scale: 3 });
+    const canvas = document.createElement('canvas');
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+
+    logoPDFCanvas = canvas;
+
+    // Inject into header (inverted to white via CSS filter)
+    document.getElementById('headerLogo').src = canvas.toDataURL('image/png');
+
+  } catch (err) {
+    // logo.pdf not found yet — header stays empty, QR will generate without logo overlay
+    console.warn('logo.pdf non trovato in public/. Carica il file per abilitare il logo.', err);
+  }
+}
+
 /* ── Init ── */
+loadLogoPDF();
 loadHistory();
